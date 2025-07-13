@@ -12,6 +12,10 @@ from app.certificate import generate_signed_cert
 from app.filter import ContentFilter
 from utils.logger import logger
 
+import asyncio
+from app.db.session import AsyncSessionLocal
+from app.db import crud
+
 
 class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for proxy server."""
@@ -20,6 +24,31 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         self.cache = ProxyCache()
         self.filter = ContentFilter()
         super().__init__(*args, **kwargs)
+    
+    async def is_domain_blocked_in_db(self, host, client_ip):
+        """Check in the database asynchronously."""
+        async with AsyncSessionLocal() as session:
+            is_blocked, reason = await crud.is_domain_blocked(session, host, client_ip)
+            return is_blocked, reason
+
+    def is_domain_blocked(self, host, client_ip):
+        """Check both static filter and database."""
+        # Check static filter first
+        is_blocked, reason = self.filter.is_domain_blocked(host)
+        if is_blocked:
+            return True, reason
+
+        # Then check database
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                self.is_domain_blocked_in_db(host, client_ip)
+            )
+            return result
+        finally:
+            loop.close()
+
 
     def do_CONNECT(self):
         """Handle CONNECT method for HTTPS tunneling."""
@@ -36,7 +65,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             )
 
             # Check if domain is blocked
-            is_blocked, block_reason = self.filter.is_domain_blocked(host)
+            is_blocked, block_reason = self.is_domain_blocked(host, self.client_address[0])
             if is_blocked:
                 self.send_response(403)
                 self.send_header("Content-Type", "text/plain")
@@ -149,10 +178,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(url)
 
         # Check if domain is blocked
-        is_blocked, block_reason = self.filter.is_domain_blocked(parsed_url.netloc)
+        is_blocked, block_reason = self.is_domain_blocked(parsed_url.netloc, self.client_address[0])
         if is_blocked:
             self._send_blocked_response(block_reason)
             return
+
 
         # Try cache for GET requests
         if method == "GET":
@@ -374,3 +404,5 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         """Suppress default logging."""
         pass
+
+    

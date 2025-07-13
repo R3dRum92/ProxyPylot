@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 from app.handler import ProxyHTTPRequestHandler
 from app.thread import ThreadedHTTPProxy
+import asyncio
+from app.db.session import init_db
 
+def init_database():
+    asyncio.run(init_db())
 
 def create_http_proxy(host="localhost", port=8080):
     """Create and start HTTP proxy server."""
+    init_database()
     proxy = ThreadedHTTPProxy((host, port), ProxyHTTPRequestHandler)
 
     print(f"Starting HTTP Proxy Server on http://{host}:{port}")

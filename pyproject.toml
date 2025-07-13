@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiosqlite>=0.21.0",
     "colorlog>=6.9.0",
     "cryptography>=45.0.5",
     "customtkinter>=5.2.2",
