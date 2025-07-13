@@ -1,0 +1,8 @@
+Starting HTTP Proxy Server on http://localhost:8080
+Admin interface: http://localhost:8080/proxy-admin
+Configure your browser to use this proxy server:
+  HTTP Proxy: localhost:8080
+  HTTPS Proxy: localhost:8080
+Press Ctrl+C to stop the server
+
+Shutting down proxy server...

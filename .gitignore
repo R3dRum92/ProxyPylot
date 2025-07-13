@@ -28,3 +28,6 @@ venv.bak/
 *.crt
 *.key
 
+*.log
+*.db
+proxy_cache/
