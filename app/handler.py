@@ -44,43 +44,20 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f"CONNECT blocked: {block_reason}".encode())
                 return
 
-            os.makedirs("certs", exist_ok=True)
-            cert_file = f"certs/{host}.crt"
-            key_file = f"certs/{host}.key"
-
-            if not (os.path.exists(cert_file) and os.path.exists(key_file)):
-                generate_signed_cert(
-                    domain=host,
-                    ca_cert_file="proxy_ca.crt",
-                    ca_key_file="proxy_ca.key",
-                    out_cert_file=cert_file,
-                    out_key_file=key_file,
-                )
-                logger.info(f"Generated new MITM cert for {host}")
-
-            self.send_response(200, "Connection established")
-            self.end_headers()
-
-            client_socket = self.request
-
-            client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            client_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
-            client_ssl = client_context.wrap_socket(client_socket, server_side=True)
-
-            logger.info(f"TLS handshake completed with client for {host}")
-
-            server_plain = socket.create_connection((host, port), timeout=30)
-            server_context = ssl.create_default_context()
-            server_ssl = server_context.wrap_socket(server_plain, server_hostname=host)
-
-            logger.info(f"TLS handshake completed with target {host}")
-
             # Create connection to target server
             target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             target_socket.settimeout(30)
             target_socket.connect((host, port))
 
-            self._tunnel_data(client_ssl, server_ssl)
+            # Send 200 Connection established
+            self.send_response(200, "Connection established")
+            self.end_headers()
+
+            # Get the underlying socket from the request
+            client_socket = self.request
+
+            # Start tunneling
+            self._tunnel_data(client_socket, target_socket)
 
         except Exception as e:
             logger.error(f"[CONNECT ERROR] {e}")
@@ -99,15 +76,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             try:
                 source.settimeout(None)
                 destination.settimeout(None)
-
                 while True:
                     data = source.recv(4096)
                     if not data:
                         break
-                    logger.info(f"[MITM {direction}]:\n{data.decode(errors="ignore")}")
-                    destination.sendall(data)
-            except (ConnectionResetError, BrokenPipeError) as e:
-                logger.error(f"[MITM {direction}] connection reset: {e}")
+                    destination.send(data)
             except Exception as e:
                 logger.info(f"[TUNNEL {direction}] Connection closed: {e}")
             finally:

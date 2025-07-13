@@ -7,4 +7,5 @@ requires-python = ">=3.12"
 dependencies = [
     "colorlog>=6.9.0",
     "cryptography>=45.0.5",
+    "customtkinter>=5.2.2",
 ]
