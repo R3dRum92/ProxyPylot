@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, CheckConstraint
+from sqlalchemy import CheckConstraint, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
+
 from .session import Base
+
 
 class BlockedDomain(Base):
     __tablename__ = "blocked_domains"
