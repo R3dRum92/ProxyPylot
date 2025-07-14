@@ -23,7 +23,7 @@ class ContentFilterGUI(ctk.CTk):
             self.content_filter = filter
 
         # Configure the main window
-        self.title("Content Filter Manager")
+        self.title("ProxyPylot")
         self.geometry("1200x800")
         self.resizable(True, True)
 
@@ -75,6 +75,22 @@ class ContentFilterGUI(ctk.CTk):
         )
         self.domains_btn.pack(fill="x", pady=(0, 15))
 
+        self.traffics_btn = ctk.CTkButton(
+            self.sidebar_inner,
+            text="Traffic Logs",
+            anchor="w",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="transparent",
+            hover_color="#374151",
+            border_width=2,
+            border_color="#374151",
+            text_color="#FAF9F6",
+            height=50,
+            corner_radius=12,
+            command=lambda: self.switch_view("traffics"),
+        )
+        self.traffics_btn.pack(fill="x", pady=(0, 15))
+
         # Main content area
         self.main_content = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f0f0f")
         self.main_content.pack(expand=True, fill="both")
@@ -96,6 +112,8 @@ class ContentFilterGUI(ctk.CTk):
         # Show the selected view
         if view_name == "domains":
             self.show_domains_view()
+        elif view_name == "traffics":
+            self.show_traffics_view()
 
     def update_sidebar_buttons(self):
         """Update sidebar button colors based on current view."""
@@ -209,6 +227,157 @@ class ContentFilterGUI(ctk.CTk):
 
         # Load from DB immediately
         asyncio.run(self.load_domains_from_db())
+
+    def show_traffics_view(self):
+        """Display the traffics log view."""
+        content_container = ctk.CTkFrame(self.main_content, fg_color="transparent")
+        content_container.pack(fill="both", expand=True, padx=30, pady=30)
+
+        # Header
+        header_label = ctk.CTkLabel(
+            content_container,
+            text="Traffic Logs",
+            font=ctk.CTkFont(size=28, weight="bold"),
+            text_color="#faf9f6"
+        )
+        header_label.pack(anchor="w", pady=(0, 30))
+
+        search_card = ctk.CTkFrame(content_container, fg_color="transparent")
+        search_card.pack(fill="both", expand=True, padx=25, pady=25)
+
+        ctk.CTkLabel(
+            search_content,
+            text="Search Traffic",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#faf9f6",
+        ).pack(anchor="w", pady=(0, 15))
+
+        search_content = ctk.CTkFrame(search_card, fg_color="transparent")
+        search_content.pack(fill="both", expand=True, padx=25, pady=25)
+
+        search_frame = ctk.CTkFrame(search_content, fg_color="transparent")
+        search_frame.pack(fill="x")
+
+        self.traffic_search_entry = ctk.CTkEntry(
+            search_frame,
+            placeholder_text="Search by IP address or site name...",
+            height=45,
+            corner_radius=10,
+            font=ctk.CTkFont(size=14),
+            fg_color="#2a2a2a",
+            border_width=1,
+            border_color="#374151",
+        )
+        self.traffic_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 15))
+
+        search_btn = ctk.CTkButton(
+            search_frame,
+            text="🔍 Search",
+            width=130,
+            height=45,
+            corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#057669",
+            hover_color="#02b981",
+            command=self.search_traffic,
+        )
+        search_btn.pack(side="right", padx=(0, 15))
+
+        clear_btn = ctk.CTkButton(
+            search_frame,
+            text="Clear",
+            width=100,
+            height=45,
+            corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#374151",
+            hover_color="#4B5563",
+            command=self.clear_traffic_search,
+        )
+        clear_btn.pack(side="right")
+
+        # Traffic table card
+        table_card = ctk.CTkFrame(content_container, fg_color="#1a1a1a", corner_radius=15)
+        table_card.pack(fill="both", expand=True)
+
+        table_content = ctk.CTkFrame(table_card, fg_color="transparent")
+        table_content.pack(fill="both", expand=True, padx=25, pady=25)
+
+        table_header = ctk.CTkFrame(table_content, fg_color="transparent")
+        table_header.pack(fill="x", pady=(0, 15))
+
+        table_title = ctk.CTkLabel(
+            table_header,
+            text="Network Traffic",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#faf9f6",
+        )
+        table_title.pack(side="left")
+
+        # Traffic count badge
+        self.traffic_count_badge = ctk.CTkLabel(
+            table_header,
+            text="Loading...",
+            font=ctk.CTkFont(size=12),
+            text_color="#faf9f6",
+            fg_color="#374151",
+            corner_radius=15,
+            width=120,
+            height=30,
+        )
+        self.traffic_count_badge.pack(side="right")
+
+        # Table header
+        table_header_frame = ctk.CTkFrame(
+            table_content,
+            fg_color="#2a2a2a",
+            corner_radius=10,
+            border_width=1,
+            border_color="#374151",
+        )
+        table_header_frame.pack(fill="x", pady=(0, 10))
+
+        header_content = ctk.CTkFrame(table_header_frame, fg_color="transparent")
+        header_content.pack(fill="x", padx=20, pady=15)
+
+        # Configure grid weights for columns
+        header_content.grid_columnconfigure(0, weight=2)  # Site name
+        header_content.grid_columnconfigure(1, weight=1)  # IP address
+        header_content.grid_columnconfigure(2, weight=1)  # Time
+
+        ctk.CTkLabel(
+            header_content,
+            text="Site Name",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        ctk.CTkLabel(
+            header_content,
+            text="IP Address",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=1, sticky="w", padx=(0, 10))
+
+        ctk.CTkLabel(
+            header_content,
+            text="Time",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=2, sticky="w")
+
+        # Scrollable traffic list
+        self.traffic_scrollable = ctk.CTkScrollableFrame(
+            table_content,
+            fg_color="#0f0f0f",
+            corner_radius=12,
+            scrollbar_button_color="#68696C",
+        )
+        self.traffic_scrollable.pack(fill="both", expand=True)
+
 
     def update_domains_list(self):
         asyncio.run(self.load_domains_from_db())
