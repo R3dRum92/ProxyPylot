@@ -1,21 +1,27 @@
-from datetime import datetime, timedelta
-from sqlalchemy.future import select
-from .models import BlockedDomain
 import ipaddress
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Tuple
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from .models import BlockedDomain
 
 
 async def add_blocked_domain(
-    session,
+    session: AsyncSession,
     pattern: str,
     scope: str = "global",
-    subnet: str = None,
-    reason: str = None,
-    added_by: str = None,
-    expires_in_seconds: int = None
-):
+    subnet: Optional[str] = None,
+    reason: Optional[str] = None,
+    added_by: Optional[str] = None,
+    expires_in_seconds: Optional[int] = None,
+) -> BlockedDomain:
     expires_at = None
     if expires_in_seconds:
-        expires_at = datetime.now(datetime.timezone.utc) + timedelta(seconds=expires_in_seconds)
+        expires_at = datetime.now(datetime.timezone.utc) + timedelta(
+            seconds=expires_in_seconds
+        )
 
     new_rule = BlockedDomain(
         pattern=pattern.lower(),
@@ -23,24 +29,64 @@ async def add_blocked_domain(
         subnet=subnet,
         reason=reason,
         added_by=added_by,
-        expires_at=expires_at
+        expires_at=expires_at,
     )
     session.add(new_rule)
     await session.commit()
     await session.refresh(new_rule)
     return new_rule
 
-#active rules
-async def get_active_rules(session):
-    now = datetime.now(datetime.timezone.utc)
+
+# active rules
+async def get_active_rules(session: AsyncSession) -> List[BlockedDomain]:
+    now = datetime.now(timezone.utc)
     stmt = select(BlockedDomain).where(
         (BlockedDomain.expires_at.is_(None)) | (BlockedDomain.expires_at > now)
     )
     result = await session.execute(stmt)
     return result.scalars().all()
 
-#delete rules
-async def delete_rule(session, rule_id: int):
+
+async def update_blocked_domain(
+    session: AsyncSession,
+    rule_id: int,
+    pattern: Optional[str] = None,
+    scope: Optional[str] = None,
+    subnet: Optional[str] = None,
+    reason: Optional[str] = None,
+    added_by: Optional[str] = None,
+    expires_in_seconds: Optional[int] = None,
+) -> Optional[BlockedDomain]:
+    result = await session.execute(
+        select(BlockedDomain).where(BlockedDomain.id == rule_id)
+    )
+    rule = result.scalar_one_or_none()
+
+    if not rule:
+        return None
+
+    if pattern:
+        rule.pattern = pattern.lower()
+    if scope:
+        rule.scope = scope
+    if subnet:
+        rule.subnet = subnet
+    if reason:
+        rule.reason = reason
+    if added_by:
+        rule.added_by = added_by
+    if expires_in_seconds is not None:
+        rule.expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=expires_in_seconds
+        )
+
+    await session.commit()
+    await session.refresh(rule)
+    return rule
+
+
+# delete rules
+async def delete_rule(session: AsyncSession, rule_id: int) -> None:
     stmt = select(BlockedDomain).where(BlockedDomain.id == rule_id)
     result = await session.execute(stmt)
     rule = result.scalar_one_or_none()
@@ -49,7 +95,8 @@ async def delete_rule(session, rule_id: int):
         await session.delete(rule)
         await session.commit()
 
-#find op
+
+# find op
 def ip_in_subnet(ip: str, subnet: str) -> bool:
     try:
         ip_obj = ipaddress.ip_address(ip)
@@ -58,13 +105,18 @@ def ip_in_subnet(ip: str, subnet: str) -> bool:
     except ValueError:
         return False
 
-async def is_domain_blocked(session, host: str, client_ip: str = None):
-    now = datetime.utcnow()
+
+async def is_domain_blocked(
+    session: AsyncSession, host: str, client_ip: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
+    now = datetime.now(timezone.utc)
     stmt = select(BlockedDomain).where(
         (BlockedDomain.expires_at.is_(None)) | (BlockedDomain.expires_at > now)
     )
     result = await session.execute(stmt)
     rules = result.scalars().all()
+
+    # SELECT * FROM BlockedDomain WHERE expires_at IS NULL || expires_at > now
 
     host_lower = host.lower()
     for rule in rules:

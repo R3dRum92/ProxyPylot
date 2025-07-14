@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
+import threading
+from functools import partial
+from typing import Optional
+
+from app.filter import ContentFilter
+from app.GUI import ContentFilterGUI
 from app.handler import ProxyHTTPRequestHandler
 from app.thread import ThreadedHTTPProxy
-import asyncio
-from app.db.session import init_db
 
-def init_database():
-    asyncio.run(init_db())
 
-def create_http_proxy(host="localhost", port=8080):
+def create_http_proxy(
+    host: str = "localhost", port: int = 8080, filter: Optional[ContentFilter] = None
+):
     """Create and start HTTP proxy server."""
-    init_database()
-    proxy = ThreadedHTTPProxy((host, port), ProxyHTTPRequestHandler)
+    if filter is None:
+        proxy = ThreadedHTTPProxy((host, port), ProxyHTTPRequestHandler)
+    else:
+        handler_class = partial(ProxyHTTPRequestHandler, content_filter=filter)
+
+        proxy = ThreadedHTTPProxy((host, port), handler_class)
 
     print(f"Starting HTTP Proxy Server on http://{host}:{port}")
     print(f"Admin interface: http://{host}:{port}/proxy-admin")
@@ -28,4 +36,10 @@ def create_http_proxy(host="localhost", port=8080):
 
 
 if __name__ == "__main__":
-    create_http_proxy("localhost", 8080)
+    filter = ContentFilter()
+    proxy_thread = threading.Thread(
+        target=create_http_proxy, args=("localhost", 8080, filter), daemon=True
+    )
+    proxy_thread.start()
+    app = ContentFilterGUI()
+    app.run()
