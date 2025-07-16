@@ -17,13 +17,12 @@ async def add_blocked_domain(
     added_by: Optional[str] = None,
     expires_in_seconds: Optional[int] = None,
     duration_hours: Optional[int] = None,
-    
 ) -> BlockedDomain:
-    expires_at = None
+    now = datetime.now(timezone.utc)
     if expires_in_seconds:
-        expires_at = datetime.now(datetime.timezone.utc) + timedelta(
-            seconds=expires_in_seconds
-        )
+        expires_at = now + timedelta(seconds=expires_in_seconds)
+    elif duration_hours:
+        expires_at = now + timedelta(hours=duration_hours)
 
     new_rule = BlockedDomain(
         pattern=pattern.lower(),
