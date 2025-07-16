@@ -16,6 +16,8 @@ async def add_blocked_domain(
     reason: Optional[str] = None,
     added_by: Optional[str] = None,
     expires_in_seconds: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+    
 ) -> BlockedDomain:
     expires_at = None
     if expires_in_seconds:

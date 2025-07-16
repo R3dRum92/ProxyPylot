@@ -2,6 +2,8 @@ from sqlalchemy import CheckConstraint, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 from .session import Base
+from datetime import datetime, timedelta
+from typing import Optional
 
 
 class BlockedDomain(Base):
@@ -19,3 +21,18 @@ class BlockedDomain(Base):
     __table_args__ = (
         CheckConstraint("scope IN ('global', 'subnet')", name="scope_check"),
     )
+
+    @property
+    def duration_hours(self) -> Optional[int]:
+        """Calculates the duration in hours based on created_at and expires_at."""
+        if self.expires_at is None:
+            return None  # Permanent block
+        if self.created_at is None:
+            # This scenario should ideally not happen if created_at is always set
+            return None
+        
+        # Ensure both are timezone-aware if func.now() is timezone-aware
+        # Or make them naive for calculation if consistent
+        
+        time_difference: timedelta = self.expires_at - self.created_at
+        return int(time_difference.total_seconds() / 3600) # Convert seconds to hours
