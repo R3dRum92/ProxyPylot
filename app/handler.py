@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Optional
 
 from app.cache import ProxyCache
+from app.db import crud
 from app.filter import ContentFilter
 from utils.logger import logger
 
@@ -37,6 +38,17 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             logger.info(
                 f"[{datetime.datetime.now()}] CONNECT {host}:{port} from {self.client_address[0]}"
             )
+
+            try:
+                asyncio.run(
+                    crud.add_traffic_log(
+                        method="CONNECT",
+                        url=str(host),
+                        client_ip=self.client_address[0],
+                    )
+                )
+            except Exception as e:
+                logger.error(f"[TRAFFIC LOG ERROR] {e}")
 
             # Check if domain is blocked
             is_blocked, block_reason = self.is_domain_blocked(

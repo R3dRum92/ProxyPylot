@@ -5,7 +5,24 @@ from typing import List, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from .models import BlockedDomain
+from .models import BlockedDomain, TrafficLog
+from .session import get_session
+
+
+async def add_traffic_log(method: str, url: str, client_ip: str):
+    async with get_session() as session:
+        new_log = TrafficLog(method=method, url=url, client_ip=client_ip)
+        session.add(new_log)
+        await session.commit()
+
+
+async def get_all_traffic_logs(limit=100):
+    async with get_session() as session:
+        result = await session.execute(
+            select(TrafficLog).order_by(TrafficLog.time.desc()).limit(limit)
+        )
+        logs = result.scalars().all()
+        return logs
 
 
 async def add_blocked_domain(

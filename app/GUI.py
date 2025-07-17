@@ -134,6 +134,8 @@ class ContentFilterGUI(ctk.CTk):
 
     def show_domains_view(self):
         """Display the blocked domains view."""
+
+        self.stop_traffic_auto_refresh()
         content_container = ctk.CTkFrame(self.main_content, fg_color="transparent")
         content_container.pack(fill="both", expand=True, padx=30, pady=30)
 
@@ -431,7 +433,11 @@ class ContentFilterGUI(ctk.CTk):
     def on_scope_change(self, selected_scope):
         """Show/hide subnet field based on scope selection."""
         if selected_scope == "subnet":
-            self.subnet_row.pack(fill="x", pady=(0, 15), before=self.subnet_row.master.winfo_children()[-2])
+            self.subnet_row.pack(
+                fill="x",
+                pady=(0, 15),
+                before=self.subnet_row.master.winfo_children()[-2],
+            )
         else:
             self.subnet_row.pack_forget()
 
@@ -454,12 +460,14 @@ class ContentFilterGUI(ctk.CTk):
             content_container,
             text="Traffic Logs",
             font=ctk.CTkFont(size=28, weight="bold"),
-            text_color="#faf9f6"
+            text_color="#faf9f6",
         )
         header_label.pack(anchor="w", pady=(0, 30))
 
         # Search card
-        search_card = ctk.CTkFrame(content_container, fg_color="#1a1a1a", corner_radius=15)
+        search_card = ctk.CTkFrame(
+            content_container, fg_color="#1a1a1a", corner_radius=15
+        )
         search_card.pack(fill="x", pady=(0, 25))
 
         search_content = ctk.CTkFrame(search_card, fg_color="transparent")
@@ -514,7 +522,9 @@ class ContentFilterGUI(ctk.CTk):
         clear_btn.pack(side="right")
 
         # Traffic table card
-        table_card = ctk.CTkFrame(content_container, fg_color="#1a1a1a", corner_radius=15)
+        table_card = ctk.CTkFrame(
+            content_container, fg_color="#1a1a1a", corner_radius=15
+        )
         table_card.pack(fill="both", expand=True)
 
         table_content = ctk.CTkFrame(table_card, fg_color="transparent")
@@ -596,7 +606,92 @@ class ContentFilterGUI(ctk.CTk):
         self.traffic_scrollable.pack(fill="both", expand=True)
 
         # Load traffic data (you'll need to implement this)
-        # self.load_traffic_data()
+        self.load_traffic_data()
+
+        self.start_traffic_auto_refresh(interval_ms=5000)
+
+    def start_traffic_auto_refresh(self, interval_ms=500):
+        """Start periodically refreshing traffic data"""
+        self._traffic_auto_refresh_interval = interval_ms
+        self._traffic_auto_refresh_running = True
+        self._traffic_auto_refresh()
+
+    def stop_traffic_auto_refresh(self):
+        """Stop the auto refresh loop."""
+        self._traffic_auto_refresh_running = False
+
+    def _traffic_auto_refresh(self):
+        if not self._traffic_auto_refresh_running:
+            return
+        self.load_traffic_data()
+        self.after(self._traffic_auto_refresh_interval, self._traffic_auto_refresh)
+
+    def load_traffic_data(self, search_term=None):
+        """Load traffic data from DB and display it"""
+        asyncio.run(self._load_traffic_data_async(search_term))
+
+    async def _load_traffic_data_async(self, search_term=None):
+        from app.db.crud import get_all_traffic_logs
+
+        for child in self.traffic_scrollable.winfo_children():
+            child.destroy()
+
+        logs = await get_all_traffic_logs()
+
+        if search_term:
+            search_term = search_term.lower()
+            logs = [
+                log
+                for log in logs
+                if search_term in log.url.lower()
+                or search_term in log.client_ip.lower()
+            ]
+
+        self.traffic_count_badge.configure(text=f"{len(logs)} records")
+
+        for log in logs:
+            self._add_traffic_row(log)
+
+    def _add_traffic_row(self, log):
+        row_frame = ctk.CTkFrame(
+            self.traffic_scrollable, fg_color="#1a1a1a", corner_radius=8
+        )
+
+        row_frame.pack(fill="x", pady=4)
+
+        row_content = ctk.CTkFrame(row_frame, fg_color="transparent")
+        row_content.pack(fill="x", padx=15, pady=10)
+
+        row_content.grid_columnconfigure(0, weight=2)
+        row_content.grid_columnconfigure(1, weight=1)
+        row_content.grid_columnconfigure(2, weight=1)
+
+        # Site Name
+        ctk.CTkLabel(
+            row_content,
+            text=log.url,
+            font=ctk.CTkFont(size=13),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        # IP Address
+        ctk.CTkLabel(
+            row_content,
+            text=log.client_ip,
+            font=ctk.CTkFont(size=13),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=1, sticky="w")
+
+        # Time
+        ctk.CTkLabel(
+            row_content,
+            text=log.time.strftime("%Y-%m-%d %H:%M:%S"),
+            font=ctk.CTkFont(size=13),
+            text_color="#faf9f6",
+            anchor="w",
+        ).grid(row=0, column=2, sticky="w")
 
     def search_traffic(self):
         """Search traffic logs based on the search entry."""
@@ -604,7 +699,7 @@ class ContentFilterGUI(ctk.CTk):
         if not search_term:
             messagebox.showwarning("Warning", "Please enter a search term!")
             return
-        
+
         # TODO: Implement traffic search functionality
         # This would filter the traffic display based on the search term
         print(f"Searching for: {search_term}")
@@ -718,7 +813,7 @@ class ContentFilterGUI(ctk.CTk):
             for widget in [domain_content, hover_frame]:
                 widget.bind("<Enter>", on_enter)
                 widget.bind("<Leave>", on_leave)
-                
+
     def add_domain(self):
         domain = self.domain_entry.get().strip()
         scope = self.scope_var.get()
@@ -733,7 +828,9 @@ class ContentFilterGUI(ctk.CTk):
         if scope == "subnet":
             subnet = self.subnet_entry.get().strip()
             if not subnet:
-                messagebox.showwarning("Warning", "Please enter a subnet when scope is set to 'subnet'!")
+                messagebox.showwarning(
+                    "Warning", "Please enter a subnet when scope is set to 'subnet'!"
+                )
                 return
 
         if duration_unit != "permanent" and not duration_value:
@@ -767,15 +864,20 @@ class ContentFilterGUI(ctk.CTk):
 
     async def _add_domain_async(self, domain, scope, duration_hours):
         await self.content_filter.add_block_rule(
-            pattern=domain, 
-            scope=scope, 
+            pattern=domain,
+            scope=scope,
             reason="Added via GUI",
-            duration_hours=duration_hours
+            duration_hours=duration_hours,
         )
         self.clear_form()
-        
-        duration_text = "permanent" if duration_hours is None else f"{duration_hours} hours"
-        messagebox.showinfo("Success", f"Domain '{domain}' added to blocked list!\nScope: {scope}\nDuration: {duration_text}")
+
+        duration_text = (
+            "permanent" if duration_hours is None else f"{duration_hours} hours"
+        )
+        messagebox.showinfo(
+            "Success",
+            f"Domain '{domain}' added to blocked list!\nScope: {scope}\nDuration: {duration_text}",
+        )
         await self.load_domains_from_db()
 
     def remove_domain(self, rule_id):
@@ -795,4 +897,9 @@ class ContentFilterGUI(ctk.CTk):
 
 if __name__ == "__main__":
     app = ContentFilterGUI()
+    app.run()
+    app.run()
+    app.run()
+    app.run()
+    app.run()
     app.run()
