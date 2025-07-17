@@ -116,6 +116,9 @@ async def delete_rule(session: AsyncSession, rule_id: int) -> None:
 
 # find op
 def ip_in_subnet(ip: str, subnet: str) -> bool:
+    """
+    Checks if an IP address is within a given subnet (CIDR)
+    """
     try:
         ip_obj = ipaddress.ip_address(ip)
         net_obj = ipaddress.ip_network(subnet, strict=False)

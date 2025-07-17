@@ -700,15 +700,73 @@ class ContentFilterGUI(ctk.CTk):
             messagebox.showwarning("Warning", "Please enter a search term!")
             return
 
-        # TODO: Implement traffic search functionality
-        # This would filter the traffic display based on the search term
-        print(f"Searching for: {search_term}")
+        from app.db.crud import get_all_traffic_logs
+
+        logs = get_all_traffic_logs(limit=500)
+
+        filtered = [
+            log
+            for log in logs
+            if search_term.lower() in log.url.lower() or search_term in log.client_ip
+        ]
+
+        for child in self.traffic_scrollable.winfo_children():
+            child.destroy()
+
+        if not filtered:
+            self.traffic_count_badge.configure(text="0 results")
+            label = ctk.CTkLabel(
+                self.traffic_scrollable,
+                text="No matching records.",
+                font=ctk.CTkFont(size=14),
+                text_color="#faf9f6",
+            )
+            label.pack(padx=10, pady=10)
+            return
+
+        self.traffic_count_badge.configure(text=f"{len(filtered)} results")
+
+        for log in filtered:
+            row_frame = ctk.CTkFrame(
+                self.traffic_scrollable, fg_color="#1a1a1a", corner_radius=8
+            )
+            row_frame.pack(fill="x", pady=4)
+
+            row_content = ctk.CTkFrame(row_frame, fg_color="transparent")
+            row_content.pack(fill="x", padx=15, pady=10)
+
+            row_content.grid_columnconfigure(0, weight=2)
+            row_content.grid_columnconfigure(1, weight=1)
+            row_content.grid_columnconfigure(2, weight=1)
+
+            ctk.CTkLabel(
+                row_content,
+                text=log.url,
+                font=ctk.CTkFont(size=13),
+                text_color="#faf9f6",
+                anchor="w",
+            ).grid(row=0, column=0, sticky="w")
+
+            ctk.CTkLabel(
+                row_content,
+                text=log.client_ip,
+                font=ctk.CTkFont(size=13),
+                text_color="#faf9f6",
+                anchor="w",
+            ).grid(row=0, column=1, sticky="w")
+
+            ctk.CTkLabel(
+                row_content,
+                text=log.time.strftime("%Y-%m-%d %H:%M:%S"),
+                font=ctk.CTkFont(size=13),
+                text_color="#faf9f6",
+                anchor="w",
+            ).grid(row=0, column=2, sticky="w")
 
     def clear_traffic_search(self):
         """Clear the traffic search entry and reload all traffic."""
         self.traffic_search_entry.delete(0, "end")
-        # TODO: Reload all traffic data
-        # self.load_traffic_data()
+        self.load_traffic_data()
 
     def update_domains_list(self):
         asyncio.run(self.load_domains_from_db())
@@ -853,19 +911,15 @@ class ContentFilterGUI(ctk.CTk):
                 return
 
         try:
-            # Prepare scope value
-            scope_value = scope
-            if scope == "subnet":
-                scope_value = f"subnet:{subnet}"
-
-            asyncio.run(self._add_domain_async(domain, scope_value, duration_hours))
+            asyncio.run(self._add_domain_async(domain, scope, subnet, duration_hours))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to add domain: {e}")
 
-    async def _add_domain_async(self, domain, scope, duration_hours):
+    async def _add_domain_async(self, domain, scope, subnet, duration_hours):
         await self.content_filter.add_block_rule(
             pattern=domain,
             scope=scope,
+            subnet=subnet,
             reason="Added via GUI",
             duration_hours=duration_hours,
         )
