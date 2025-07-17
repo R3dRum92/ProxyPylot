@@ -1,5 +1,8 @@
 import asyncio
 import datetime
+import hashlib
+import os
+import re
 import socket
 import ssl
 import threading
@@ -8,7 +11,7 @@ from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler
 from typing import Optional
 
-from app.cache import ProxyCache
+from app.db import crud
 from app.filter import ContentFilter
 from utils.logger import logger
 
@@ -17,7 +20,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for proxy server."""
 
     def __init__(self, *args, content_filter=None, **kwargs):
-        self.cache = ProxyCache()
         if content_filter:
             self.filter = content_filter
         else:
@@ -25,7 +27,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_CONNECT(self):
-        """Handle CONNECT method for HTTPS tunneling."""
+        """Handle CONNECT method for MITM HTTPS interception."""
         try:
             # Parse host and port
             host_port = self.path.split(":")
@@ -38,6 +40,13 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                 f"[{datetime.datetime.now()}] CONNECT {host}:{port} from {self.client_address[0]}"
             )
 
+            try:
+                asyncio.run(
+                    crud.add_traffic_log("CONNECT", host, self.client_address[0])
+                )
+            except Exception as e:
+                logger.error(f"[TRAFFIC LOG ERROR] {e}")
+
             # Check if domain is blocked
             is_blocked, block_reason = self.is_domain_blocked(
                 host, self.client_address[0]
@@ -49,20 +58,46 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f"CONNECT blocked: {block_reason}".encode())
                 return
 
-            # Create connection to target server
-            target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target_socket.settimeout(30)
-            target_socket.connect((host, port))
+            # Create the folder to store certs if missing
+            os.makedirs("certs", exist_ok=True)
+            cert_file = f"certs/{host}.crt"
+            key_file = f"certs/{host}.key"
 
-            # Send 200 Connection established
+            # Check if we already have a signed cert for this host
+            if not (os.path.exists(cert_file) and os.path.exists(key_file)):
+                from app.certificate import generate_signed_cert
+
+                generate_signed_cert(
+                    domain=host,
+                    ca_cert_file="proxy_ca.crt",
+                    ca_key_file="proxy_ca.key",
+                    out_cert_file=cert_file,
+                    out_key_file=key_file,
+                )
+                logger.info(f"Generated new MITM cert for {host}")
+
+            # Send 200 Connection established to browser
             self.send_response(200, "Connection established")
             self.end_headers()
 
-            # Get the underlying socket from the request
             client_socket = self.request
 
-            # Start tunneling
-            self._tunnel_data(client_socket, target_socket)
+            # Wrap client socket with our fake cert -> intercept TLS
+            client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            client_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+            client_ssl = client_context.wrap_socket(client_socket, server_side=True)
+
+            logger.info(f"TLS handshake completed with client for {host}")
+
+            # Connect to target server with real TLS
+            server_plain = socket.create_connection((host, port), timeout=30)
+            server_context = ssl.create_default_context()
+            server_ssl = server_context.wrap_socket(server_plain, server_hostname=host)
+
+            logger.info(f"TLS handshake completed with target {host}")
+
+            # Start MITM proxying
+            self._mitm_tunnel_data(client_ssl, server_ssl, host=host)
 
         except Exception as e:
             logger.error(f"[CONNECT ERROR] {e}")
@@ -73,6 +108,197 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f"Connection failed: {str(e)}".encode())
             except:
                 pass
+
+    def _mitm_tunnel_data(self, client_ssl, server_ssl, host=None):
+        """Tunnel data between client (browser) and target server (with decryption)."""
+
+        def forward(source, destination, direction, host=host):
+            try:
+                source.settimeout(None)
+                destination.settimeout(None)
+                buffer = b""
+                headers_parsed = False
+                content_length = None
+                is_chunked = False
+                body = b""
+                while True:
+                    data = source.recv(4096)
+                    if not data:
+                        break
+
+                    destination.sendall(data)
+
+                    if direction == "C->S":
+                        try:
+                            # Only do this if you want to see human-readable HTTP data
+                            decoded = data.decode("utf-8", errors="ignore")
+                            logger.info(
+                                f"[HTTPS REQUEST] {decoded[:300]}"
+                            )  # Log first 300 chars
+                        except Exception as e:
+                            logger.debug(f"[C->S decode error] {e}")
+                    elif direction == "S->C":
+                        buffer += data
+                        if not headers_parsed:
+                            if b"\r\n\r\n" in buffer:
+                                headers_parsed = True
+                                header_part, remaining = buffer.split(b"\r\n\r\n", 1)
+                                headers = header_part.decode("iso-8859-1")
+
+                                match = re.search(
+                                    r"Content-Length: (\d+)", headers, re.IGNORECASE
+                                )
+                                if match:
+                                    content_length = int(match.group(1))
+
+                                if "Transfer-Encoding: chunked" in headers:
+                                    is_chunked = True
+
+                                body += remaining
+
+                                if content_length is None and not is_chunked:
+                                    break
+                            else:
+                                body += data
+
+                            if content_length is not None:
+                                if len(body) >= content_length:
+                                    break
+                            elif is_chunked:
+                                # Crude end-of-chunk check (may need better parsing)
+                                if b"0\r\n\r\n" in body:
+                                    break
+
+            except Exception as e:
+                logger.info(f"[MITM {direction}] closed: {e}")
+            finally:
+                if direction == "S->C" and buffer:
+                    try:
+                        # Extract URL if possible, or pass "/" as dummy
+                        self.cache_https_response(buffer, host=host, url="/")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache response: {e}")
+                try:
+                    source.close()
+                except:
+                    pass
+                try:
+                    destination.close()
+                except:
+                    pass
+
+        c2s = threading.Thread(
+            target=forward, args=(client_ssl, server_ssl, "C->S"), daemon=True
+        )
+        s2c = threading.Thread(
+            target=forward, args=(server_ssl, client_ssl, "S->C"), daemon=True
+        )
+
+        c2s.start()
+        s2c.start()
+
+        c2s.join()
+        s2c.join()
+
+    def cache_https_response(self, buffer: bytes, host: str, url: str):
+        cache_key = hashlib.sha256(f"{host}{url}".encode()).hexdigest()
+
+        cache_path = f"cache/{cache_key}.resp"
+        os.makedirs("cache", exist_ok=True)
+
+        with open(cache_path, "wb") as f:
+            f.write(buffer)
+
+        logger.info(f"[CACHE] Saved response to {cache_path}")
+
+    def _read_http_message(self, sock):
+        """
+        Read one full HTTP/1.1 message (request or response) from a socket,
+        handling both Content-Length and Transfer-Encoding: chunked.
+        """
+
+        # Step 1: Read headers
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return None
+            data += chunk
+
+        header_end = data.find(b"\r\n\r\n") + 4
+        headers = data[:header_end]
+        body = data[header_end:]
+
+        # Step 2: Parse headers
+        headers_text = headers.decode("iso-8859-1")
+        lines = headers_text.split("\r\n")
+        headers_dict = {}
+        for line in lines[1:]:
+            if ":" in line:
+                key, val = line.split(":", 1)
+                headers_dict[key.strip().lower()] = val.strip().lower()
+
+        # Step 3: Decide body transfer
+        if "content-length" in headers_dict:
+            length = int(headers_dict["content-length"])
+            while len(body) < length:
+                body += sock.recv(4096)
+            return headers + body
+
+        elif headers_dict.get("transfer-encoding") == "chunked":
+            # Handle chunked
+            body += self._read_chunked_body(sock, body)
+            return headers + body
+
+        else:
+            # No body
+            return headers
+
+    def _read_chunked_body(self, sock, already_read=b""):
+        data = already_read
+        body = b""
+
+        def read_line():
+            nonlocal data
+            while b"\r\n" not in data:
+                more = sock.recv(4096)
+                if not more:
+                    return None
+                data += more
+            idx = data.find(b"\r\n")
+            line = data[:idx]
+            data = data[idx + 2 :]
+            return line
+
+        while True:
+            # Read chunk size line
+            size_line = read_line()
+            if size_line is None:
+                break
+            try:
+                chunk_size = int(size_line.strip(), 16)
+            except ValueError:
+                break
+
+            if chunk_size == 0:
+                # Read trailer and final CRLF
+                while True:
+                    trailer_line = read_line()
+                    if trailer_line in (b"", None):
+                        break
+                break
+
+            # Read chunk data
+            while len(data) < chunk_size + 2:
+                more = sock.recv(4096)
+                if not more:
+                    return body
+                data += more
+
+            body += data[:chunk_size]
+            data = data[chunk_size + 2 :]  # skip CRLF
+
+        return body
 
     def is_domain_blocked(self, domain: str, client_ip: Optional[str] = None):
         try:
@@ -388,4 +614,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Suppress default logging."""
+        pass
+        pass
+        pass
         pass

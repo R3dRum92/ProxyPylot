@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+import asyncio
 import threading
 from functools import partial
 from typing import Optional
 
+from app.db.session import init_db
 from app.filter import ContentFilter
 from app.GUI import ContentFilterGUI
 from app.handler import ProxyHTTPRequestHandler
@@ -36,6 +38,7 @@ def create_http_proxy(
 
 
 if __name__ == "__main__":
+    asyncio.run(init_db())
     filter = ContentFilter()
     proxy_thread = threading.Thread(
         target=create_http_proxy, args=("localhost", 8080, filter), daemon=True

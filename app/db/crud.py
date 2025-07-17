@@ -5,7 +5,24 @@ from typing import List, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from .models import BlockedDomain
+from .models import BlockedDomain, TrafficLog
+from .session import get_session
+
+
+async def add_traffic_log(method: str, url: str, client_ip: str):
+    async with get_session() as session:
+        new_log = TrafficLog(method=method, url=url, client_ip=client_ip)
+        session.add(new_log)
+        await session.commit()
+
+
+async def get_all_traffic_logs(limit=100):
+    async with get_session() as session:
+        result = await session.execute(
+            select(TrafficLog).order_by(TrafficLog.time.desc()).limit(limit)
+        )
+        logs = result.scalars().all()
+        return logs
 
 
 async def add_blocked_domain(
@@ -17,13 +34,14 @@ async def add_blocked_domain(
     added_by: Optional[str] = None,
     expires_in_seconds: Optional[int] = None,
     duration_hours: Optional[int] = None,
-    
 ) -> BlockedDomain:
-    expires_at = None
+    now = datetime.now(timezone.utc)
     if expires_in_seconds:
-        expires_at = datetime.now(datetime.timezone.utc) + timedelta(
-            seconds=expires_in_seconds
-        )
+        expires_at = now + timedelta(seconds=expires_in_seconds)
+    elif duration_hours:
+        expires_at = now + timedelta(hours=duration_hours)
+    else:
+        expires_at = None
 
     new_rule = BlockedDomain(
         pattern=pattern.lower(),
@@ -100,6 +118,9 @@ async def delete_rule(session: AsyncSession, rule_id: int) -> None:
 
 # find op
 def ip_in_subnet(ip: str, subnet: str) -> bool:
+    """
+    Checks if an IP address is within a given subnet (CIDR)
+    """
     try:
         ip_obj = ipaddress.ip_address(ip)
         net_obj = ipaddress.ip_network(subnet, strict=False)
