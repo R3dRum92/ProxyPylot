@@ -610,7 +610,7 @@ class ContentFilterGUI(ctk.CTk):
 
         self.start_traffic_auto_refresh(interval_ms=5000)
 
-    def start_traffic_auto_refresh(self, interval_ms=500):
+    def start_traffic_auto_refresh(self, interval_ms=5000):
         """Start periodically refreshing traffic data"""
         self._traffic_auto_refresh_interval = interval_ms
         self._traffic_auto_refresh_running = True
@@ -882,7 +882,7 @@ class ContentFilterGUI(ctk.CTk):
         if not domain:
             messagebox.showwarning("Warning", "Please enter a valid domain!")
             return
-
+        subnet = None
         if scope == "subnet":
             subnet = self.subnet_entry.get().strip()
             if not subnet:

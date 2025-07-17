@@ -40,6 +40,8 @@ async def add_blocked_domain(
         expires_at = now + timedelta(seconds=expires_in_seconds)
     elif duration_hours:
         expires_at = now + timedelta(hours=duration_hours)
+    else:
+        expires_at = None
 
     new_rule = BlockedDomain(
         pattern=pattern.lower(),

@@ -31,3 +31,5 @@ venv.bak/
 *.log
 *.db
 proxy_cache/
+
+cache/
